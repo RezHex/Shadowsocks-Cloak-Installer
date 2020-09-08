@@ -26,8 +26,13 @@ function GetRandomPort() {
 function PrintWarning(){
 	echo "$(tput setaf 3)Warning!$(tput sgr 0) $1"
 }
+function RunCloakAdmin(){
+	ck-client -s 127.0.0.1 -p $PORT -a "$(jq -r '.AdminUID' ckserver.json)" -l "$LOCAL_PANEL_PORT" -c ckadminclient.json & #The & will make this to run in background
+	echo "Please wait 5 seconds to let the ck-client start..."
+	sleep 5 # you can change this number if you like
+}
 function GenerateProxyBook() {
-	#Format of the proxy book is arr[method] = "(t/u)ip:port"
+	#Format of the proxy book is arr[method] = "(t/d)ip:port"
 	PROXY_BOOK=""
 	for method in "${!proxyBook[@]}"; do
 		PROXY_BOOK+='"'
@@ -67,7 +72,7 @@ function ListAllUIDs() {
 	unset new_array
 	#Now list all of the restricted users
 	GetRandomPort LOCAL_PANEL_PORT
-	ck-client -s 127.0.0.1 -p $PORT -a "$(jq -r '.AdminUID' ckserver.json)" -l "$LOCAL_PANEL_PORT" -c ckadminclient.json &#The & will make this to run in background
+	RunCloakAdmin
 	RESTRICTED_UIDS=$(curl http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users -sS)
 	kill $!
 	wait $! 2>/dev/null
@@ -143,15 +148,14 @@ if [ -d "/etc/cloak" ]; then
 			DownCredit=$((DownCredit * 1048576))
 			UpCredit=$((UpCredit * 1048576))
 			GetRandomPort LOCAL_PANEL_PORT
-			ck-client -s 127.0.0.1 -p $PORT -a "$(jq -r '.AdminUID' ckserver.json)" -l "$LOCAL_PANEL_PORT" -c ckadminclient.json & #The & will make this to run in background
-			ckencoded=$(echo "$ckbuid" | tr '+' '-' | tr '/' '_')                                                                  #Encode just like https://github.com/cbeuw/Cloak-panel/blob/master/script/endpoint.js#L38
-			curl -d "UserInfo={\"UID\":\"$ckbuid\",\"SessionsCap\":$CAP,\"UpRate\":$UpRate,\"DownRate\":$DownRate,\"UpCredit\":$UpCredit,\"DownCredit\":$DownCredit,\"ExpiryTime\":$ValidDays}" -X POST "http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users/$ckencoded"
+			RunCloakAdmin
+			ckencoded=$(echo "$ckbuid" | tr '+' '-' | tr '/' '_') #Encode just like https://github.com/cbeuw/Cloak-panel/blob/master/script/endpoint.js#L38
+			curl --data-urlencode "UserInfo={\"UID\":\"$ckbuid\",\"SessionsCap\":$CAP,\"UpRate\":$UpRate,\"DownRate\":$DownRate,\"UpCredit\":$UpCredit,\"DownCredit\":$DownCredit,\"ExpiryTime\":$ValidDays}" -X POST "http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users/$ckencoded"
 			kill $!
 			wait $! 2>/dev/null
 		else
 			conf=$(jq --arg key "$ckbuid" '.BypassUID += [$key]' <ckserver.json)
-			rm ckserver.json
-			echo "$conf" >>ckserver.json
+			echo "$conf" >ckserver.json
 		fi
 		echo "Ok here is the UID: $ckbuid"
 		read -r -p "Do you want me to generate a config file for it?(y/n) " -e -i "n" OPTION
@@ -189,7 +193,7 @@ if [ -d "/etc/cloak" ]; then
 			ckmethod=${OPTIONS[OPTION]}
 			read -r -p "Choose a file name for the client file: " ckclient_name
 			ckpub=$(jq -r '.PublicKey' ckadminclient.json)
-			ckwebaddr="204.79.197.200"
+			ckwebaddr="www.bing.com"
 			WriteClientFile
 			if [[ "$ckmethod" == "shadowsocks" ]]; then
 				echo "Please wait..."
@@ -205,7 +209,7 @@ if [ -d "/etc/cloak" ]; then
 			fi
 			echo "Sample file saved at /etc/cloak/$ckclient_name.json"
 		else
-			echo "Ok one more here is your UDID: $ckbuid"
+			echo "Ok once more here is your UDID: $ckbuid"
 			echo "You can list it again later with running this script again."
 		fi
 		systemctl restart cloak-server
@@ -221,6 +225,7 @@ if [ -d "/etc/cloak" ]; then
 			COUNTER=$((COUNTER + 1))
 		done
 		read -r -p "Which UID you want to revoke?(Choose by number) " OPTION
+		OPTION=$((OPTION - 1))
 		UID_TO_REMOVE=${UIDS[OPTION]}
 		#Check if the user is in unrestricted users
 		mapfile -t UIDS < <(jq -r '.BypassUID[]' ckserver.json)
@@ -233,11 +238,11 @@ if [ -d "/etc/cloak" ]; then
 		if [[ $UNRESTRICTED_UID == true ]]; then
 			conf=$(jq --arg key "$UID_TO_REMOVE" '.BypassUID -= [$key]' <ckserver.json)
 			rm ckserver.json
-			"$conf" >>ckserver.json
+			echo "$conf" >>ckserver.json
 		else
-			ckencoded=$(echo "$UID_TO_REMOVE" | tr '+' '-' | tr '/' '_')                                                           #Encode just like https://github.com/cbeuw/Cloak-panel/blob/master/script/endpoint.js#L38
-			ck-client -s 127.0.0.1 -p $PORT -a "$(jq -r '.AdminUID' ckserver.json)" -l "$LOCAL_PANEL_PORT" -c ckadminclient.json &#The & will make this to run in background
-			RESTRICTED_UIDS=$(curl -X "DELETE" "http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users/$UID_TO_REMOVE" -sS)
+			ckencoded=$(echo "$UID_TO_REMOVE" | tr '+' '-' | tr '/' '_')  #Encode just like https://github.com/cbeuw/Cloak-panel/blob/master/script/endpoint.js#L38
+			RunCloakAdmin
+			RESTRICTED_UIDS=$(curl -X "DELETE" "http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users/$ckencoded" -sS)
 			kill $!
 			wait $! 2>/dev/null
 		fi
@@ -253,7 +258,7 @@ if [ -d "/etc/cloak" ]; then
 		#Now print all of the other users
 		echo
 		GetRandomPort LOCAL_PANEL_PORT
-		ck-client -s 127.0.0.1 -p $PORT -a "$(jq -r '.AdminUID' ckserver.json)" -l "$LOCAL_PANEL_PORT" -c ckadminclient.json &#The & will make this to run in background
+		RunCloakAdmin
 		RESTRICTED_UIDS=$(curl "http://127.0.0.1:$LOCAL_PANEL_PORT/admin/users" -sS)
 		kill $!
 		wait $! 2>/dev/null
@@ -302,27 +307,36 @@ if [ -d "/etc/cloak" ]; then
 		read -r -p "Choose by number: " OPTION
 		if [[ "$OPTION" == 1 ]]; then
 			read -r -p "Where the traffic should be forwarded?(For example 127.0.0.1:6252) " ADDRESS
+			PrintWarning "Please only use lowercase english characters in \"ProxyMethod\"."
 			read -r -p "What should this be called? Clients must use this name as \"ProxyMethod\" on their computers: " METHOD
-			conf=$(jq -r --arg "$METHOD" "$ADDRESS" '.ProxyBook += {$k}' ckserver.json)
-			rm ckserver.json
-			echo "$conf" >>ckserver.json
+			if [[ ${#METHOD} -gt 12 ]]; then
+				echo "Please choose a method that is less than 12 characters"
+				exit 1
+			fi
+			read -r -p "Is this a TCP connection?(y/n): " -e -i "y" OPTION
+			if [[ $OPTION == "n" ]] || [[ $OPTION == "N" ]]; then
+				PROTOCOL="udp"
+			else
+				PROTOCOL="tcp"
+			fi
+			conf=$(jq --arg m "$METHOD" --arg a "$ADDRESS" --arg p "$PROTOCOL" '.ProxyBook[$m] = [$p,$a]' ckserver.json)
+			echo "$conf" > ckserver.json
 		elif [[ "$OPTION" == 2 ]]; then
-			mapfile -t Rules < <(jq --arg k "$METHOD" --arg v "$ADDRESS" '.ProxyBook[$k] = $v' ckserver.json)
+			mapfile -t Rules < <(jq -r '.ProxyBook | keys[]' ckserver.json)
 			COUNTER=1
 			for i in "${Rules[@]}"; do
 				echo "$COUNTER) $i"
 				COUNTER=$((COUNTER + 1))
 			done
 			read -r -p "Which UID you want to see it's link?(Choose by number) " OPTION
-			if [[ "$OPTION" == 1 ]]; then
+			OPTION=$((OPTION - 1))
+			OPTION=${Rules[OPTION]}
+			if [[ "$OPTION" == "panel" ]]; then
 				echo "This is a reserved rule for this script and usermanagment. Cannot delete it."
 				exit
 			fi
-			OPTION=$((OPTION - 1))
-			OPTION=${Rules[OPTION]}
 			conf=$(jq --arg k "$OPTION" 'del(.ProxyBook[$k])' ckserver.json)
-			rm ckserver.json
-			echo "$conf" >>ckserver.json
+			echo "$conf" >ckserver.json
 		fi
 		systemctl restart cloak-server
 		echo "Done"
@@ -363,8 +377,8 @@ if [ -d "/etc/cloak" ]; then
 			fi
 			rm -rf /etc/shadowsocks-libev
 			rm -rf /etc/cloak
-			rm -f /usr/local/bin/ck-server
-			rm -f /usr/local/bin/ck-client
+			rm -f /usr/bin/ck-server
+			rm -f /usr/bin/ck-client
 			echo "Done"
 			echo "Please reboot the server for a clean uninstall."
 		fi
@@ -394,9 +408,9 @@ if [ "$PORT" -gt 65535 ]; then
 	exit 1
 fi
 #Set redirect ip for cloak; Just like https://gist.github.com/cbeuw/37a9d434c237840d7e6d5e497539c1ca#file-shadowsocks-ck-release-sh-L165
-echo -e "Please enter a redirection IP for Cloak (leave blank to set it to 204.79.197.200 of bing.com): "
+echo -e "Please enter a redirection IP and port for Cloak (leave blank to set it to 204.79.197.200:443 of bing.com): "
 read -r -p "" ckwebaddr
-[ -z "$ckwebaddr" ] && ckwebaddr="204.79.197.200"
+[ -z "$ckwebaddr" ] && ckwebaddr="204.79.197.200:443"
 #Check arch
 arch=$(uname -m)
 case $arch in
@@ -463,7 +477,7 @@ if [[ $OPTION == "y" ]] || [[ $OPTION == "Y" ]]; then
 		ver=$(cat /etc/debian_version)
 		ver="${ver:0:1}"
 		if [ "$ver" == "8" ]; then
-			default_cipher=2
+			default_cipher=13
 			ciphers=(rc4-md5 aes-128-cfb aes-192-cfb aes-256-cfb aes-128-ctr aes-192-ctr aes-256-ctr bf-cfb camellia-128-cfb camellia-192-cfb camellia-256-cfb salsa20 chacha20)
 		fi
 	fi
@@ -514,11 +528,15 @@ if [[ $OPTION == "y" ]] || [[ $OPTION == "Y" ]]; then
 	echo "If you want to configure Tor with Cloak read here: https://github.com/cbeuw/Cloak/wiki/Underlying-proxy-configuration-guides#tor"
 	echo "If you have not installed the Openvpn or Tor yet, you can either choose a port for them here and install them later, or Ctrl+C here and go install them, then re-run the script again."
 	echo
-	PrintWarning "Please do not use special characters in \"ProxyMethod\"."
+	PrintWarning "Please only use lowercase english characters in \"ProxyMethod\"."
 	PrintWarning "If you wish to add a UDP destination, at client you should run ck-client with \"-u\" argument."
 	while true; do
 		read -r -p "Where the traffic should be forwarded?(For example 127.0.0.1:6252) " ADDRESS
 		read -r -p "What should this be called? Clients must use this name as \"ProxyMethod\" on their computers: " METHOD
+		if [[ ${#METHOD} -gt 12 ]]; then
+			echo "Please choose a method that is less than 12 characters"
+			continue
+		fi
 		read -r -p "Is this a TCP connection?(y/n): " -e -i "y" OPTION
 		if [[ $OPTION == "n" ]] || [[ $OPTION == "N" ]]; then
 			ADDRESS=d$ADDRESS
@@ -549,12 +567,12 @@ fi
 url=$(wget -O - -o /dev/null https://api.github.com/repos/cbeuw/Cloak/releases/latest | grep "/ck-server-linux-$arch-" | grep -P 'https(.*)[^"]' -o)
 wget -O ck-server "$url"
 chmod +x ck-server
-mv ck-server /usr/local/bin
+mv ck-server /usr/bin
 #Install cloak client for post install management
 url=$(wget -O - -o /dev/null https://api.github.com/repos/cbeuw/Cloak/releases/latest | grep "/ck-client-linux-$arch-" | grep -P 'https(.*)[^"]' -o)
 wget -O ck-client "$url"
 chmod +x ck-client
-mv ck-client /usr/local/bin
+mv ck-client /usr/bin
 #Ok lets talk about this:
 Local_Address_Book_For_Admin="panel"
 #This is a id created for proxy book to make local admin connection though this script. Also the forwarding address will be 127.0.0.1:0; This port does not exist so it points out to nowhere and can be only used for admin panel
@@ -609,7 +627,6 @@ for ckmethod in "${!proxyBook[@]}"; do
 	fi
 done
 #Create service for Cloak
-rm /etc/systemd/system/cloak-server.service
 echo "[Unit]
 Description=Cloak Server Service
 After=network-online.target
@@ -620,11 +637,11 @@ Type=simple
 User=root
 Group=root
 LimitNOFILE=32768
-ExecStart=/usr/local/bin/ck-server -c ckserver.json
+ExecStart=/usr/bin/ck-server -c ckserver.json
 WorkingDirectory=/etc/cloak
 
 [Install]
-WantedBy=multi-user.target" >>/etc/systemd/system/cloak-server.service
+WantedBy=multi-user.target" >/etc/systemd/system/cloak-server.service
 systemctl daemon-reload
 systemctl start cloak-server
 systemctl enable cloak-server
@@ -639,6 +656,7 @@ if [[ $distro =~ "CentOS" ]]; then
 		"y" | "Y")
 			yum -y install firewalld
 			systemctl enable firewalld
+			systemctl start firewalld
 			;;
 		*)
 			SETFIREWALL=false
@@ -646,7 +664,6 @@ if [[ $distro =~ "CentOS" ]]; then
 		esac
 	fi
 	if [ "$SETFIREWALL" = true ]; then
-		systemctl start firewalld
 		firewall-cmd --zone=public --add-port="$PORT"/tcp
 		firewall-cmd --runtime-to-permanent
 	fi
@@ -728,7 +745,6 @@ if [[ "$SHADOWSOCKS" == true ]]; then
 	systemctl start haveged
 	systemctl enable haveged
 	#Config shadowsocks
-	rm -f /etc/shadowsocks-libev/config.json
 	echo "{
     \"server\":\"127.0.0.1\",
     \"server_port\":$SS_PORT,
@@ -736,7 +752,7 @@ if [[ "$SHADOWSOCKS" == true ]]; then
     \"timeout\":60,
     \"method\":\"$cipher\",
     \"nameserver\":\"$ss_dns\"
-}" >>/etc/shadowsocks-libev/config.json
+}" >/etc/shadowsocks-libev/config.json
 	systemctl daemon-reload
 	systemctl restart shadowsocks-libev
 	systemctl enable shadowsocks-libev
